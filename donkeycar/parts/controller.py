@@ -79,6 +79,7 @@ class Joystick(object):
             axis_name = self.axis_names.get(axis, 'unknown(0x%02x)' % axis)
             self.axis_map.append(axis_name)
             self.axis_states[axis_name] = 0.0
+            # logger.info(f"TESTAS: {axis_name}: {self.axis_states[axis_name]}")
 
         # Get the button map.
         buf = array.array('H', [0] * 200)
@@ -1511,6 +1512,87 @@ class LogitechJoystickController(JoystickController):
         logger.error("dpad right un-mapped")
 
 
+class LogitechG29Joystick(Joystick):
+    # An interface to a physical joystick available at /dev/input/js0
+    def __init__(self, *args, **kwargs):
+        super(LogitechG29Joystick, self).__init__(*args, **kwargs)
+
+        self.button_names = {
+            0x123: 'triangle',
+            0x121: 'square',
+            0x122: 'circle',
+            0x120: 'cross',
+            0x2c3: 'plus',
+            0x2c4: 'minus',
+            0x126: 'R2',
+            0x12a: 'R3',
+            0x127: 'L2',
+            0x12b: 'L3',
+            0x2c7: 'enter',
+            0x128: 'share',
+            0x129: 'options',
+            0x2c8: 'PS',
+        }
+
+        self.axis_names = {
+            0x0: 'steering',
+            0x2: 'throttle',
+            0x5: 'break',
+            0x1: 'clutch',
+            0x10: 'horizontal',
+            0x11: 'vertical',
+        }
+
+    def poll(self):
+        button, button_state, axis, axis_val = super().poll()
+
+        fvalue = axis_val
+        if axis == 'throttle':
+            fvalue = (fvalue - 1) / 2
+        if axis == 'break':
+            fvalue = abs(fvalue - 1) / 2
+            axis = 'throttle'
+        if axis == 'steering':
+            # fvalue = pow(fvalue, 3) * 50
+            fvalue = fvalue * 1.75
+        axis_val = fvalue
+
+        return button, button_state, axis, axis_val
+
+
+class LogitechG29JoystickController(JoystickController):
+    # A Controller object that maps inputs to actions
+    def __init__(self, *args, **kwargs):
+        super(LogitechG29JoystickController, self).__init__(*args, **kwargs)
+
+    def init_js(self):
+        # attempt to init joystick
+        try:
+            self.js = LogitechG29Joystick(self.dev_fn)
+            self.js.init()
+        except FileNotFoundError:
+            print(self.dev_fn, "not found.")
+            self.js = None
+        return self.js is not None
+
+    def init_trigger_maps(self):
+        # init set of mapping from buttons to function calls
+
+        self.button_down_trigger_map = {
+            'options': self.toggle_mode,
+            'cross': self.emergency_stop,
+            'plus': self.increase_max_throttle,
+            'minus': self.decrease_max_throttle,
+            'triangle': self.toggle_constant_throttle,
+            'L3': self.erase_last_N_records,
+            'L2': self.toggle_manual_recording,
+        }
+
+        self.axis_trigger_map = {
+            'steering': self.set_steering,
+            'throttle': self.set_throttle,
+        }
+
 class NimbusController(JoystickController):
     #A Controller object that maps inputs to actions
     def __init__(self, *args, **kwargs):
@@ -1721,6 +1803,8 @@ def get_js_controller(cfg):
         cont_class = WiiUController
     elif cfg.CONTROLLER_TYPE == "F710":
         cont_class = LogitechJoystickController
+    elif cfg.CONTROLLER_TYPE == "G29":
+        cont_class = LogitechG29JoystickController
     elif cfg.CONTROLLER_TYPE == "rc3":
         cont_class = RC3ChanJoystickController
     elif cfg.CONTROLLER_TYPE == "pygame":
